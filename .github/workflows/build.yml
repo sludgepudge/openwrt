@@ -53,12 +53,6 @@ jobs:
         cd openwrt
         make -j$(nproc)
 
-    - name: Upload firmware to GitHub Artifacts (fallback)
-      uses: actions/upload-artifact@v3
-      with:
-        name: openwrt-firmware
-        path: openwrt/bin/targets/
-
     - name: Upload firmware to Cloudflare R2
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
