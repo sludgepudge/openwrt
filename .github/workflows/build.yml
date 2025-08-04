@@ -69,4 +69,4 @@ jobs:
       run: |
         pip install awscli
         cd openwrt/bin/targets/
-        aws --endpoint-url $R2_ENDPOINT s3 cp . s3://$R2_BUCKET/ --recursive --region $R2_REGION
+        aws --endpoint-url $R2_ENDPOINT s3 cp . s3://$R2_BUCKET/mx4200v1/ --recursive --region $R2_REGION
