@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     name: Build OpenWrt Image
 
     steps:
@@ -97,11 +97,11 @@ jobs:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         VERSION: ${{ steps.upload-firmware.outputs.version }}
       run: |
-        curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"✅ OpenWrt build succeeded!\nVersion: $VERSION\"}" $DISCORD_WEBHOOK_URL
+        curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"# ✅ OpenWrt build succeeded!\n### Version: $VERSION\"}" $DISCORD_WEBHOOK_URL
 
     - name: Notify Discord on failure
       if: failure()
       env:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       run: |
-        curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"❌ OpenWrt build failed!\nCheck the logs.\"}" $DISCORD_WEBHOOK_URL
+        curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"# ❌ OpenWrt build failed!\n### Check the logs.\"}" $DISCORD_WEBHOOK_URL
