@@ -2,6 +2,8 @@ name: Build OpenWrt with Custom Packages
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * *'
 
 jobs:
   build:
@@ -63,4 +65,5 @@ jobs:
       run: |
         pip install awscli
         cd openwrt/bin/targets/
-        aws --endpoint-url $R2_ENDPOINT s3 cp . s3://$R2_BUCKET/mx4200v1/ --recursive --region $R2_REGION
+        VERSION=$(cat version.buildinfo | tr -d '\n')
+        aws --endpoint-url $R2_ENDPOINT s3 cp . s3://$R2_BUCKET/mx4200v1/$VERSION/ --recursive --region $R2_REGION
