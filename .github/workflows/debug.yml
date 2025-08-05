@@ -6,6 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    name: Debug Build Environment
     
     continue-on-error: true
 

@@ -114,8 +114,15 @@ jobs:
         VERSION=$(cat version.buildinfo | tr -d '\n')
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-        echo "Uploading to s3://$R2_BUCKET/mx4200v1/$VERSION/"
-        aws --endpoint-url "$R2_ENDPOINT" s3 cp . "s3://$R2_BUCKET/mx4200v1/$VERSION/" --recursive
+        echo "Syncing to flush disk writes..."
+        sync
+
+        echo "Verifying SHA-256 checksums..."
+        sha256sum -c sha256sums
+
+        echo "All checks passed. Uploading to s3://$R2_BUCKET/mx4200v1/$VERSION/"
+        aws --endpoint-url "$R2_ENDPOINT" s3 cp . "s3://$R2_BUCKET/mx4200v1/$VERSION/" --recursive --exclude "packages/*"
+
 
     - name: Notify Discord on success
       if: success()
