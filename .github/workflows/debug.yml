@@ -86,9 +86,21 @@ jobs:
 
     - name: Build Env Debugging
       run: |
-        cd openwrt
-        head -n5 .version
-
+        echo ":: SYSTEM INFO ::"
+        uname -a
         ld --version
         gcc --version
-        cat .config | grep ^CONFIG_USE_*
+        ldd --version
+
+        echo ":: CONFIG SUMMARY ::"
+        grep '^CONFIG_TARGET' openwrt/.config
+        grep '^CONFIG_KERNEL' openwrt/.config | sort
+
+        echo ":: VERSION INFO ::"
+        find openwrt/bin/targets -name 'version.buildinfo' -exec cat {} \;
+        find openwrt/bin/targets -name 'feeds.buildinfo' -exec head -n10 {} \;
+        find openwrt/build_dir -name '.vermagic' -exec cat {} \;
+
+        echo ":: IMAGE DETAILS ::"
+        find openwrt/bin/targets -type f -exec ls -lh {} \;
+
