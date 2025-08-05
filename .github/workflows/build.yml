@@ -3,7 +3,7 @@ name: Build OpenWrt with Custom Packages
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'  # Daily at midnight UTC
+    - cron: '0 0 * * *'
 
 jobs:
   build:
@@ -54,7 +54,7 @@ jobs:
       with:
         repository: qosmio/openwrt-ipq
         path: openwrt
-        fetch-depth: 1
+        fetch-depth: 0
 
     - name: Set up build environment
       run: |
