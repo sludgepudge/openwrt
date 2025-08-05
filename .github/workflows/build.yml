@@ -69,40 +69,39 @@ jobs:
     - name: Build firmware
       run: |
         cd openwrt
-        make -j1 V=s tools/install
-        make -j1 V=s toolchain/install
+        make -j$(nproc) V=s
 
-    # - name: Configure AWS credentials
-    #   uses: aws-actions/configure-aws-credentials@v4
-    #   with:
-    #     aws-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-    #     aws-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-    #     aws-region: ${{ secrets.R2_REGION }}
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.R2_REGION }}
 
-    # - name: Upload firmware to Cloudflare R2
-    #   id: upload-firmware
-    #   env:
-    #     R2_BUCKET: openwrt
-    #     R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-    #   run: |
-    #     cd openwrt/bin/targets
-    #     TARGET_DIR=$(find . -type f -name version.buildinfo -exec dirname {} \;)
-    #     VERSION=$(cat "$TARGET_DIR/version.buildinfo" | tr -d '\n')
-    #     echo "::set-output name=version::$VERSION"
-    #     echo "Uploading to s3://$R2_BUCKET/mx4200v1/$VERSION/"
-    #     aws --endpoint-url "$R2_ENDPOINT" s3 cp "$TARGET_DIR" "s3://$R2_BUCKET/mx4200v1/$VERSION/" --recursive
+    - name: Upload firmware to Cloudflare R2
+      id: upload-firmware
+      env:
+        R2_BUCKET: openwrt
+        R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      run: |
+        cd openwrt/bin/targets
+        TARGET_DIR=$(find . -type f -name version.buildinfo -exec dirname {} \;)
+        VERSION=$(cat "$TARGET_DIR/version.buildinfo" | tr -d '\n')
+        echo "::set-output name=version::$VERSION"
+        echo "Uploading to s3://$R2_BUCKET/mx4200v1/$VERSION/"
+        aws --endpoint-url "$R2_ENDPOINT" s3 cp "$TARGET_DIR" "s3://$R2_BUCKET/mx4200v1/$VERSION/" --recursive
 
-    # - name: Notify Discord on success
-    #   if: success()
-    #   env:
-    #     DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-    #     VERSION: ${{ steps.upload-firmware.outputs.version }}
-    #   run: |
-    #     curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"# ✅ OpenWrt build succeeded!\n### Version: $VERSION\"}" $DISCORD_WEBHOOK_URL
+    - name: Notify Discord on success
+      if: success()
+      env:
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        VERSION: ${{ steps.upload-firmware.outputs.version }}
+      run: |
+        curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"# ✅ OpenWrt build succeeded!\n### Version: $VERSION\"}" $DISCORD_WEBHOOK_URL
 
-    # - name: Notify Discord on failure
-    #   if: failure()
-    #   env:
-    #     DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-    #   run: |
-    #     curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"# ❌ OpenWrt build failed!\n### Check the logs.\"}" $DISCORD_WEBHOOK_URL
+    - name: Notify Discord on failure
+      if: failure()
+      env:
+        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      run: |
+        curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"# ❌ OpenWrt build failed!\n### Check the logs.\"}" $DISCORD_WEBHOOK_URL
