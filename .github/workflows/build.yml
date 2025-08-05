@@ -100,25 +100,22 @@ jobs:
         cd openwrt
         make -j$(nproc) V=s
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.R2_REGION }}
-
     - name: Upload firmware to Cloudflare R2
       id: upload-firmware
       env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         R2_BUCKET: openwrt
         R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
       run: |
         cd openwrt/bin/targets
         TARGET_DIR=$(find . -type f -name version.buildinfo -exec dirname {} \;)
-        VERSION=$(cat "$TARGET_DIR/version.buildinfo" | tr -d '\n')
-        echo "::set-output name=version::$VERSION"
+        cd "$TARGET_DIR"
+        VERSION=$(cat version.buildinfo | tr -d '\n')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
         echo "Uploading to s3://$R2_BUCKET/mx4200v1/$VERSION/"
-        aws --endpoint-url "$R2_ENDPOINT" s3 cp "$TARGET_DIR" "s3://$R2_BUCKET/mx4200v1/$VERSION/" --recursive
+        aws --endpoint-url "$R2_ENDPOINT" s3 cp . "s3://$R2_BUCKET/mx4200v1/$VERSION/" --recursive
 
     - name: Notify Discord on success
       if: success()
