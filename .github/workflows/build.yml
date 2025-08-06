@@ -56,6 +56,16 @@ jobs:
         path: openwrt
         fetch-depth: 0
 
+    - name: Setup cache for OpenWrt toolchain and downloads
+      uses: actions/cache@v4
+      with:
+        path: |
+          openwrt/dl
+          openwrt/staging_dir
+        key: ${{ runner.os }}-openwrt-${{ hashFiles('openwrt/feeds.conf.default', 'openwrt/.config') }}
+        restore-keys: |
+          ${{ runner.os }}-openwrt-
+
     - name: Apply custom config and files
       run: |
         cd openwrt
@@ -90,6 +100,7 @@ jobs:
       run: |
         sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
         cd openwrt
+        make clean
         make download -j$(nproc)
         make -j$(nproc)
 
