@@ -80,7 +80,7 @@ jobs:
         if [ -d ../custom/files ]; then
           cp -r ../custom/files/* files/
           if [ -d files/etc/profile.d ]; then
-            find files/etc/profile.d -type f -name '*.sh' -exec chmod +x {} \;
+            chmod -R +x files/etc/profile.d/
           fi
         fi
 
@@ -109,6 +109,11 @@ jobs:
       run: |
         cd openwrt
         make -j$(nproc) V=s
+
+    - name: Debug step (TEMP)
+      run: /
+        cd openwrt/build_dir/target-*/root-*/etc/profile.d/
+        ls -l
 
     - name: Upload firmware to Cloudflare R2
       id: upload-firmware
