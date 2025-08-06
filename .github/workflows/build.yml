@@ -70,9 +70,11 @@ jobs:
       run: |
         cd openwrt
 
+        ls -l ../custom/files/etc/profile.d/banner.sh || echo "banner.sh not found"
+
         # Add custom files if available
         if [ -d ../custom/files ]; then
-          cp -r ../custom/files/* files/
+          cp -a ../custom/files/. files/
           if [ -d files/etc/profile.d ]; then
             chmod -R +x files/etc/profile.d/
           fi
@@ -94,15 +96,12 @@ jobs:
         cp ../config.seed .config
         make defconfig
 
-    - name: Free up disk space before build
+    - name: Free up space and build firmware
       run: |
         sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-        df -h
-
-    - name: Build firmware
-      run: |
         cd openwrt
-        make -j$(nproc) V=s
+        make download -j$(nproc)
+        make -j$(nproc)
 
     - name: Debug step (TEMP)
       run: |
