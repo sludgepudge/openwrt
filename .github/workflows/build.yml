@@ -92,6 +92,7 @@ jobs:
         fi
 
         git clone --branch master --no-tags --recurse-submodules https://github.com/fantastic-packages/packages.git package/fantastic_packages
+        find package/fantastic_packages -type f -name Makefile -exec sed -i 's/+libc//g' {} \;
 
         ./scripts/feeds update -a
         ./scripts/feeds install -a
