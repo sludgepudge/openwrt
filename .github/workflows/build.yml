@@ -72,16 +72,9 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-openwrt-
 
-    - name: Add fantastic-packages repo
-      run: |
-        cd openwrt/package
-        git clone --depth=1 https://github.com/fantastic-packages/packages fantastic
-
     - name: Apply custom config and files
       run: |
         cd openwrt
-        cp ../config.seed .config
-        make defconfig
 
         # Add custom files if available
         if [ -d ../custom/files ]; then
@@ -97,6 +90,14 @@ jobs:
             [ -f "$patch" ] && patch -p1 < "$patch"
           done
         fi
+
+        git clone --branch master --no-tags --recurse-submodules https://github.com/fantastic-packages/packages.git package/fantastic_packages
+
+        ./scripts/feeds update -a
+        ./scripts/feeds install -a
+
+        cp ../config.seed .config
+        make defconfig
 
     - name: Build firmware
       run: |
