@@ -105,7 +105,7 @@ jobs:
         make -j$(nproc) V=s
 
     - name: Debug step (TEMP)
-      run: /
+      run: |
         cd openwrt/build_dir/target-*/root-*/etc/profile.d/
         ls -l
 
