@@ -29,7 +29,7 @@ EOF
 # Info below the ASCII
 echo -e "${YELLOW}"
 echo "-----------------------------------------------------"
-echo -e " OpenWrt ${WHITE}${DISTRIB_RELEASE}, ${DISTRIB_REVISION}${YELLOW}"
-echo -e " Target: ${WHITE}${DISTRIB_TARGET}${YELLOW}  |  Device: ${WHITE}${DISTRIB_BOARD}${YELLOW}"
+echo -e " Version: ${WHITE}${DISTRIB_REVISION}${YELLOW}"
+echo -e " Target: ${WHITE}${DISTRIB_TARGET}${YELLOW}"
 echo    "-----------------------------------------------------"
 echo -e "${RESET}"
