@@ -110,7 +110,7 @@ jobs:
 
         for file in openwrt-qualcommax-ipq807x-linksys_mx4200v1*; do
           if [[ -f "$file" ]]; then
-            newfile="$VERSION-${file#openwrt-qualcommax-ipq807x-linksys_mx4200v1}"
+            newfile="$VERSION${file#openwrt-qualcommax-ipq807x-linksys_mx4200v1}"
             echo "Renaming $file to $newfile"
             mv "$file" "$newfile"
           fi
