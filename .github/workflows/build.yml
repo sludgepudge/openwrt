@@ -3,12 +3,12 @@ name: Build OpenWrt with Custom Packages
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 18 * * *'
+    - cron: '0 21 * * *'
 
 jobs:
   build:
     runs-on: ubuntu-22.04
-    name: Build OpenWrt Image
+    name: Build OpenWrt Images (v1 & v2)
 
     steps:
     - name: Checkout workflow repo
@@ -54,6 +54,18 @@ jobs:
         path: openwrt
         fetch-depth: 0
 
+    # Retry feeds update/install
+    - name: Update and install feeds (with retry)
+      uses: nick-fields/retry@v3
+      with:
+        max_attempts: 3
+        retry_wait_seconds: 60
+        timeout_minutes: 15
+        command: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
     - name: Apply custom config and files
       run: |
         cd openwrt/package
@@ -64,9 +76,6 @@ jobs:
         git clone https://github.com/gSpotx2f/luci-app-cpu-status.git
 
         cd ..
-
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
 
         # Add custom files if available
         if [ -d ../custom/files ]; then
@@ -83,17 +92,18 @@ jobs:
           done
         fi
 
-        cp ../config.seed .config
-
-    - name: Build firmware
+    # Separate build for v1
+    - name: Build firmware (MX4200v1)
       run: |
         cd openwrt
+        cp ../config.v1.seed .config
         make defconfig
         make download -j$(nproc)
         make -j$(nproc)
 
-    - name: Upload firmware to Cloudflare R2
-      id: upload-firmware
+    - name: Upload firmware (MX4200v1)
+      if: success()
+      id: upload-v1
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -119,20 +129,64 @@ jobs:
             else
               newfile="${file#openwrt-qualcommax-ipq807x-linksys_mx4200v1-}"
             fi
-            echo "Renaming $file to $newfile"
-            mv "$file" "$newfile"
+              echo "Renaming $file to $newfile"
+              mv "$file" "$newfile"
           fi
         done
 
         echo "All checks passed and files processed. Uploading to s3://$R2_BUCKET/mx4200v1/$VERSION/"
         aws --endpoint-url "$R2_ENDPOINT" s3 cp . "s3://$R2_BUCKET/mx4200v1/$VERSION/" --recursive --exclude "packages/*"
 
+    # Separate build for v2
+    - name: Build firmware (MX4200v2)
+      run: |
+        cd openwrt
+        cp ../config.v2.seed .config
+        make defconfig
+        make download -j$(nproc)
+        make -j$(nproc)
+
+    - name: Upload firmware (MX4200v2)
+      if: success()
+      id: upload-v2
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        R2_BUCKET: openwrt
+        R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      run: |
+        cd openwrt/bin/targets
+        TARGET_DIR=$(find . -type f -name version.buildinfo -exec dirname {} \;)
+        cd "$TARGET_DIR"
+        VERSION=$(cat version.buildinfo | tr -d '\n')
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+        echo "Syncing to flush disk writes..."
+        sync
+
+        echo "Verifying SHA-256 checksums..."
+        sha256sum -c sha256sums
+
+        for file in openwrt-qualcommax-ipq807x-linksys_mx4200v2*; do
+          if [[ -f "$file" ]]; then
+            if [[ "$file" == *.manifest ]]; then
+              newfile="manifest"
+            else
+              newfile="${file#openwrt-qualcommax-ipq807x-linksys_mx4200v2-}"
+            fi
+              echo "Renaming $file to $newfile"
+              mv "$file" "$newfile"
+          fi
+        done
+
+        echo "All checks passed and files processed. Uploading to s3://$R2_BUCKET/mx4200v2/$VERSION/"
+        aws --endpoint-url "$R2_ENDPOINT" s3 cp . "s3://$R2_BUCKET/mx4200v2/$VERSION/" --recursive --exclude "packages/*"
 
     - name: Notify Discord on success
       if: success()
       env:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        VERSION: ${{ steps.upload-firmware.outputs.version }}
+        VERSION: ${{ steps.upload-v1.outputs.version }}
       run: |
         curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"# ✅ OpenWrt build succeeded!\n### Version: $VERSION\"}" $DISCORD_WEBHOOK_URL
 
@@ -141,4 +195,4 @@ jobs:
       env:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
       run: |
-        curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"# ❌ OpenWrt build failed!\n### Check the logs.\"}" $DISCORD_WEBHOOK_URL
+        curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"# ❌ OpenWrt build failed!\n### Variant: ${{ matrix.device || 'MX4200 (unspecified)' }}\n### Check the logs.\"}" $DISCORD_WEBHOOK_URL
