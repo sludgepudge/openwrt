@@ -11,8 +11,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        device: [mx4200v1, mx4200v2]   # 👈 both variants build in parallel
+        device: [mx4200v1, mx4200v2]
     name: Build OpenWrt ${{ matrix.device }}
+
+    outputs:
+      version: ${{ steps.upload-firmware.outputs.version }}
+      device: ${{ matrix.device }}
+      result: ${{ job.status }}
 
     steps:
     - name: Checkout workflow repo
@@ -91,11 +96,9 @@ jobs:
         cd "$TARGET_DIR"
         VERSION=$(cat version.buildinfo | tr -d '\n')
         echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Uploaded version $VERSION for ${{ matrix.device }}"
 
-        echo "Syncing to flush disk writes..."
         sync
-
-        echo "Verifying SHA-256 checksums..."
         sha256sum -c sha256sums
 
         for file in openwrt-qualcommax-ipq807x-linksys_${{ matrix.device }}*; do
@@ -105,12 +108,10 @@ jobs:
             else
               newfile="${file#openwrt-qualcommax-ipq807x-linksys_${{ matrix.device }}-}"
             fi
-            echo "Renaming $file to $newfile"
             mv "$file" "$newfile"
           fi
         done
 
-        echo "Uploading to s3://$R2_BUCKET/${{ matrix.device }}/$VERSION/"
         aws --endpoint-url "$R2_ENDPOINT" s3 cp . "s3://$R2_BUCKET/${{ matrix.device }}/$VERSION/" --recursive --exclude "packages/*"
 
   notify:
@@ -118,13 +119,34 @@ jobs:
     needs: build
     if: always()
     steps:
-    - name: Notify Discord
+    - name: Collect results and notify Discord
       env:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        R2_BUCKET: openwrt
+        R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
       run: |
-        if [ "${{ needs.build.result }}" == "success" ]; then
-          VERSION=$(echo "${{ toJSON(needs.build.outputs) }}" | jq -r '.[].version' | head -n1)
-          curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"# ✅ OpenWrt build succeeded!\n### Version: $VERSION\"}" $DISCORD_WEBHOOK_URL
+        summary=""
+        failures=()
+
+        # Extract outputs from all matrix builds
+        jq -r 'to_entries[] | "\(.value.outputs.device) \(.value.outputs.version) \(.value.result)"' <<< '${{ toJSON(needs.build) }}' > results.txt
+
+        while read -r device version result; do
+          if [ "$result" = "success" ]; then
+            url="https://${R2_BUCKET}.${R2_ENDPOINT#https://}/${device}/${version}/"
+            summary="$summary\n✅ **$device** built successfully (version: $version)\n<${url}>"
+          else
+            summary="$summary\n❌ **$device** failed to build"
+            failures+=("$device")
+          fi
+        done < results.txt
+
+        if [ ${#failures[@]} -eq 0 ]; then
+          content="# ✅ OpenWrt build succeeded!\n$summary"
         else
-          curl -H "Content-Type: application/json" -X POST -d "{\"content\": \"# ❌ OpenWrt build failed!\n### Check logs for failing device.\"}" $DISCORD_WEBHOOK_URL
+          content="# ❌ OpenWrt build failed!\n$summary"
         fi
+
+        curl -H "Content-Type: application/json" -X POST \
+          -d "{\"content\": \"$content\"}" \
+          $DISCORD_WEBHOOK_URL
