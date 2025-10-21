@@ -96,6 +96,7 @@ jobs:
         cd "$TARGET_DIR"
         VERSION=$(cat version.buildinfo | tr -d '\n')
         echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
         echo "Uploaded version $VERSION for ${{ matrix.device }}"
 
         sync
@@ -114,40 +115,99 @@ jobs:
 
         aws --endpoint-url "$R2_ENDPOINT" s3 cp . "s3://$R2_BUCKET/${{ matrix.device }}/$VERSION/" --recursive --exclude "packages/*"
 
+    - name: Emit result JSON (always)
+      if: always()
+      env:
+        R2_BUCKET: openwrt
+        R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      run: |
+        DEVICE="${{ matrix.device }}"
+        STATUS="${{ job.status }}"
+        VERSION="${VERSION:-unknown}"
+
+        # If success, link to R2; otherwise link to the run logs
+        if [ "$STATUS" = "success" ] && [ "$VERSION" != "unknown" ]; then
+          URL="https://${R2_BUCKET}.${R2_ENDPOINT#https://}/${DEVICE}/${VERSION}/"
+        else
+          URL="$RUN_URL"
+        fi
+
+        # Write JSON summary
+        cat > result-${DEVICE}.json <<EOF
+        {
+          "device": "${DEVICE}",
+          "status": "${STATUS}",
+          "version": "${VERSION}",
+          "url": "${URL}"
+        }
+        EOF
+
+        ls -l result-${DEVICE}.json
+        cat result-${DEVICE}.json
+
+    - name: Upload result JSON artifact (always)
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: result-${{ matrix.device }}
+        path: result-${{ matrix.device }}.json
+        if-no-files-found: error
+
+
   notify:
     runs-on: ubuntu-22.04
     needs: build
     if: always()
     steps:
-    - name: Collect results and notify Discord
-      env:
-        DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        R2_BUCKET: openwrt
-        R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-        RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-      run: |
-        summary=""
-        failures=()
+      - name: Download result artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: result-*
+          merge-multiple: true
+          path: results
 
-        # Dump matrix results to file for parsing
-        echo '${{ toJSON(needs.build) }}' | jq -r 'to_entries[] | "\(.key) \(.value.result) \(.value.outputs.device // "unknown") \(.value.outputs.version // "unknown")"' > results.txt
+      - name: Build Discord message
+        id: msg
+        run: |
+          set -e
+          summary=""
+          ok=true
 
-        while read -r key result device version; do
-          if [ "$result" = "success" ]; then
-            url="https://${R2_BUCKET}.${R2_ENDPOINT#https://}/${device}/${version}/"
-            summary="$summary\n✅ **$device** built successfully (version: $version)\n<${url}>"
+          for f in results/result-*.json; do
+            echo ">> Parsing $f"
+            device=$(jq -r '.device' "$f")
+            status=$(jq -r '.status' "$f")
+            version=$(jq -r '.version' "$f")
+            url=$(jq -r '.url' "$f")
+
+            if [ "$status" = "success" ]; then
+              summary="$summary\n✅ **$device** built successfully (version: $version)\n<$url>"
+            else
+              summary="$summary\n❌ **$device** failed to build → [View Logs]($url)"
+              ok=false
+            fi
+          done
+
+          if $ok; then
+            title="# ✅ OpenWrt build succeeded!"
           else
-            summary="$summary\n❌ **$device** failed to build → [View Logs]($RUN_URL)"
-            failures+=("$device")
+            title="# ❌ OpenWrt build failed!"
           fi
-        done < results.txt
 
-        if [ ${#failures[@]} -eq 0 ]; then
-          content="# ✅ OpenWrt build succeeded!\n$summary"
-        else
-          content="# ❌ OpenWrt build failed!\n$summary"
-        fi
+          # Escape newlines for JSON
+          content="$title\n$summary"
+          content="${content//'%'/%25}"
+          content="${content//$'\n'/%0A}"
+          content="${content//$'\r'/%0D}"
 
-        curl -H "Content-Type: application/json" -X POST \
-          -d "{\"content\": \"$content\"}" \
-          $DISCORD_WEBHOOK_URL
+          echo "content=$content" >> $GITHUB_OUTPUT
+
+      - name: Send Discord message
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          CONTENT: ${{ steps.msg.outputs.content }}
+        run: |
+          curl -H "Content-Type: application/json" -X POST \
+               -d "{\"content\": \"$CONTENT\"}" \
+               "$DISCORD_WEBHOOK_URL"
