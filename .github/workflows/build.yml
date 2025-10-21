@@ -45,7 +45,12 @@ jobs:
 
     - name: Apply custom config and files
       run: |
-        cd openwrt/package
+        cd openwrt
+
+        # Use custom feeds.conf if available
+        cp ../feeds.conf.custom feeds.conf.default
+
+        cd package
 
         # Clone custom packages
         git clone https://github.com/gSpotx2f/luci-app-interfaces-statistics.git
