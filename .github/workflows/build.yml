@@ -66,9 +66,8 @@ jobs:
         # Add custom files if available
         if [ -d ../custom/files ]; then
           cp -a ../custom/files/. files/
-          if [ -d files/etc/profile.d ]; then
-            chmod -R +x files/etc/profile.d/
-          fi
+          find files/ -type f \
+            -exec sh -c 'head -n1 "$1" | grep -q "^#!" && chmod +x "$1"' _ {} \;
         fi
 
         # Apply patches if any

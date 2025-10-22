@@ -1,0 +1,16 @@
+#!/bin/sh /etc/rc.common
+# /etc/init.d/batman-gw
+
+START=98
+
+start() {
+    HOSTNAME="$(uci get system.@system[0].hostname)"
+
+    if [ "$HOSTNAME" = "AP1" ]; then
+        logger -t batman-gw "Setting AP1 as gateway server"
+        batctl gw_mode server 1100mbit/110mbit
+    else
+        logger -t batman-gw "Setting $HOSTNAME as gateway client"
+        batctl gw_mode client
+    fi
+}
