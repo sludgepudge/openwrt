@@ -11,6 +11,8 @@ jobs:
     outputs:
       latest: ${{ steps.get.outputs.latest }}
       changed: ${{ steps.compare.outputs.changed }}
+    name: Check for upstream changes
+
     steps:
       - name: Get latest upstream commit
         id: get
@@ -189,6 +191,8 @@ jobs:
     needs: build
     if: always()
     runs-on: ubuntu-22.04
+    name: Send build result notification to Discord
+
     steps:
       - name: Download result artifacts
         uses: actions/download-artifact@v4
