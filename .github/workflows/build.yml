@@ -3,21 +3,52 @@ name: Build OpenWrt (MX4200 v1 & v2)
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 21 * * *'
+    - cron: '0 */2 * * *'   # every 2 hours
 
 jobs:
+  check-upstream:
+    runs-on: ubuntu-22.04
+    outputs:
+      latest: ${{ steps.get.outputs.latest }}
+      changed: ${{ steps.compare.outputs.changed }}
+    steps:
+      - name: Get latest upstream commit
+        id: get
+        run: |
+          git clone --depth 1 https://github.com/qosmio/openwrt-ipq.git upstream
+          cd upstream
+          LATEST=$(git rev-parse HEAD)
+          echo "latest=$LATEST" >> $GITHUB_OUTPUT
+
+      - name: Check against last build
+        id: compare
+        run: |
+          echo "changed=true" >> $GITHUB_OUTPUT
+          if [ -f .last_upstream_commit ]; then
+            LAST=$(cat .last_upstream_commit)
+            if [ "$LAST" = "${{ steps.get.outputs.latest }}" ]; then
+              echo "No new commits ($LAST), skipping build."
+              echo "changed=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+          echo "${{ steps.get.outputs.latest }}" > .last_upstream_commit
+
+      - name: Cache latest commit hash
+        uses: actions/cache@v4
+        with:
+          path: .last_upstream_commit
+          key: upstream-commit-${{ steps.get.outputs.latest }}
+          restore-keys: upstream-commit-
+
   build:
+    needs: check-upstream
+    if: needs.check-upstream.outputs.changed == 'true'
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
         device: [mx4200v1, mx4200v2]
     name: Build OpenWrt ${{ matrix.device }}
-
-    outputs:
-      version: ${{ steps.upload-firmware.outputs.version }}
-      device: ${{ matrix.device }}
-      result: ${{ job.status }}
 
     steps:
     - name: Checkout workflow repo
@@ -66,6 +97,7 @@ jobs:
         # Add custom files if available
         if [ -d ../custom/files ]; then
           cp -a ../custom/files/. files/
+          # Make all shebang-aware files executable
           find files/ -type f \
             -exec sh -c 'head -n1 "$1" | grep -q "^#!" && chmod +x "$1"' _ {} \;
         fi
@@ -130,14 +162,12 @@ jobs:
         STATUS="${{ job.status }}"
         VERSION="${VERSION:-unknown}"
 
-        # If success, link to R2; otherwise link to the run logs
         if [ "$STATUS" = "success" ] && [ "$VERSION" != "unknown" ]; then
           URL="https://${R2_BUCKET}.${R2_ENDPOINT#https://}/${DEVICE}/${VERSION}/"
         else
           URL="$RUN_URL"
         fi
 
-        # Write JSON summary
         cat > result-${DEVICE}.json <<EOF
         {
           "device": "${DEVICE}",
@@ -147,9 +177,6 @@ jobs:
         }
         EOF
 
-        ls -l result-${DEVICE}.json
-        cat result-${DEVICE}.json
-
     - name: Upload result JSON artifact (always)
       if: always()
       uses: actions/upload-artifact@v4
@@ -158,11 +185,10 @@ jobs:
         path: result-${{ matrix.device }}.json
         if-no-files-found: error
 
-
   notify:
-    runs-on: ubuntu-22.04
     needs: build
     if: always()
+    runs-on: ubuntu-22.04
     steps:
       - name: Download result artifacts
         uses: actions/download-artifact@v4
@@ -179,7 +205,6 @@ jobs:
           ok=true
 
           for f in results/result-*.json; do
-            echo ">> Parsing $f"
             device=$(jq -r '.device' "$f")
             status=$(jq -r '.status' "$f")
             version=$(jq -r '.version' "$f")
@@ -199,7 +224,6 @@ jobs:
             title="# ❌ OpenWrt build failed!"
           fi
 
-          # Escape newlines for JSON
           content="$title\n$summary"
           content="${content//'%'/%25}"
           content="${content//$'\n'/%0A}"
