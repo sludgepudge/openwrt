@@ -20,27 +20,35 @@ jobs:
           git clone --depth 1 https://github.com/qosmio/openwrt-ipq.git upstream
           cd upstream
           LATEST=$(git rev-parse HEAD)
-          echo "latest=$LATEST" >> $GITHUB_OUTPUT
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
 
-      - name: Check against last build
-        id: compare
-        run: |
-          echo "changed=true" >> $GITHUB_OUTPUT
-          if [ -f .last_upstream_commit ]; then
-            LAST=$(cat .last_upstream_commit)
-            if [ "$LAST" = "${{ steps.get.outputs.latest }}" ]; then
-              echo "No new commits ($LAST), skipping build."
-              echo "changed=false" >> $GITHUB_OUTPUT
-            fi
-          fi
-          echo "${{ steps.get.outputs.latest }}" > .last_upstream_commit
-
-      - name: Cache latest commit hash
+      - name: Restore last upstream commit cache
         uses: actions/cache@v4
         with:
           path: .last_upstream_commit
           key: upstream-commit-${{ steps.get.outputs.latest }}
-          restore-keys: upstream-commit-
+          restore-keys: |
+            upstream-commit-
+
+      - name: Compare with last build
+        id: compare
+        run: |
+          LATEST="${{ steps.get.outputs.latest }}"
+          if [ -f .last_upstream_commit ]; then
+            LAST=$(cat .last_upstream_commit)
+            if [ "$LAST" = "$LATEST" ]; then
+              echo "No new commits ($LAST)."
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "New commit: $LATEST (was $LAST)."
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "First run (no previous commit)."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          # Update the marker so the cache can save it in post-step
+          echo "$LATEST" > .last_upstream_commit
 
   build:
     needs: check-upstream
@@ -188,8 +196,8 @@ jobs:
         if-no-files-found: error
 
   notify:
-    needs: build
-    if: always()
+    needs: [check-upstream, build]
+    if: needs.check-upstream.outputs.changed == 'true'
     runs-on: ubuntu-22.04
     name: Send build result notification to Discord
 
@@ -215,9 +223,9 @@ jobs:
             url=$(jq -r '.url' "$f")
 
             if [ "$status" = "success" ]; then
-              summary="$summary\n✅ **$device** built successfully (version: $version)\n<$url>"
+              summary="$summary\n🟢 **$device** built successfully (version: $version)\n<$url>"
             else
-              summary="$summary\n❌ **$device** failed to build → [View Logs]($url)"
+              summary="$summary\n🔴 **$device** failed to build → [View Logs]($url)"
               ok=false
             fi
           done
