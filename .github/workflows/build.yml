@@ -164,7 +164,7 @@ jobs:
     - name: Emit result JSON (always)
       if: always()
       env:
-        R2_BUCKET: openwrt
+        R2_URL: ow.okie.eu
         R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
         RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
       run: |
@@ -173,7 +173,7 @@ jobs:
         VERSION="${VERSION:-unknown}"
 
         if [ "$STATUS" = "success" ] && [ "$VERSION" != "unknown" ]; then
-          URL="https://${R2_BUCKET}.${R2_ENDPOINT#https://}/${DEVICE}/${VERSION}/"
+          URL="https://${R2_URL}/${DEVICE}/${VERSION}/squashfs-sysupgrade.bin"
         else
           URL="$RUN_URL"
         fi
@@ -223,7 +223,7 @@ jobs:
             url=$(jq -r '.url' "$f")
 
             if [ "$status" = "success" ]; then
-              summary="$summary\n🟢 **$device** built successfully (version: $version)\n<$url>"
+              summary="$summary\n🟢 **$device** built successfully (version: $version)\n💾 **sysupgrade image:**\n<$url>"
             else
               summary="$summary\n🔴 **$device** failed to build → [View Logs]($url)"
               ok=false
