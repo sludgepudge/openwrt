@@ -2,6 +2,15 @@ name: Build OpenWrt (MX4200 v1 & v2)
 
 on:
   workflow_dispatch:
+    inputs:
+      mx4200v1_config_url:
+        description: Optional HTTPS URL for a temporary MX4200 v1 config
+        required: false
+        type: string
+      mx4200v2_config_url:
+        description: Optional HTTPS URL for a temporary MX4200 v2 config
+        required: false
+        type: string
   schedule:
     - cron: '0 */2 * * *'   # every 2 hours
 
@@ -52,7 +61,7 @@ jobs:
 
   build:
     needs: check-upstream
-    if: needs.check-upstream.outputs.changed == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.check-upstream.outputs.changed == 'true'
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
@@ -85,6 +94,10 @@ jobs:
         fetch-depth: 0   # full history, keeps proper rXXXXX version
 
     - name: Apply custom config and files
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        MX4200V1_CONFIG_URL: ${{ inputs.mx4200v1_config_url }}
+        MX4200V2_CONFIG_URL: ${{ inputs.mx4200v2_config_url }}
       run: |
         cd openwrt
 
@@ -119,8 +132,39 @@ jobs:
           done
         fi
 
-        # Use the right config.seed for the current matrix device
-        cp ../config.${{ matrix.device }}.seed .config
+        # Use an optional externally hosted config only for manual builds.
+        DEVICE="${{ matrix.device }}"
+        case "$DEVICE" in
+          mx4200v1) CONFIG_URL="$MX4200V1_CONFIG_URL" ;;
+          mx4200v2) CONFIG_URL="$MX4200V2_CONFIG_URL" ;;
+          *)
+            echo "Unsupported device: $DEVICE" >&2
+            exit 1
+            ;;
+        esac
+
+        if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$CONFIG_URL" ]; then
+          echo "Using externally hosted config for $DEVICE."
+          curl --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' \
+            --output .config "$CONFIG_URL"
+
+          if [ ! -s .config ]; then
+            echo "Downloaded config for $DEVICE is empty." >&2
+            exit 1
+          fi
+
+          # Normalize files uploaded from Windows before validating the target.
+          sed -i 's/\r$//' .config
+          EXPECTED_TARGET="CONFIG_TARGET_qualcommax_ipq807x_DEVICE_linksys_${DEVICE}=y"
+          if ! grep -Fxq "$EXPECTED_TARGET" .config; then
+            echo "Downloaded config does not target $DEVICE." >&2
+            exit 1
+          fi
+        else
+          echo "Using repository config for $DEVICE."
+          cp "../config.${DEVICE}.seed" .config
+        fi
 
     - name: Build firmware
       run: |
@@ -197,7 +241,7 @@ jobs:
 
   notify:
     needs: [check-upstream, build]
-    if: needs.check-upstream.outputs.changed == 'true'
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.check-upstream.outputs.changed == 'true')
     runs-on: ubuntu-22.04
     name: Send build result notification to Discord
 
