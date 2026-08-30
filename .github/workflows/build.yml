@@ -85,12 +85,12 @@ jobs:
       #
       # IMPORTANT:
       #
-      # Restore only. Do NOT use actions/cache@v4 here, otherwise a restored
+      # Restore only. Do NOT use the combined actions/cache@v4 here, otherwise a restored
       # previous marker can be saved under the new key before the firmware has
       # actually built successfully.
       #
       - name: Restore last successful upstream state
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .last_successful_upstream_state
           key: successful-upstream-${{ steps.upstream.outputs.state }}
@@ -573,7 +573,7 @@ jobs:
           cat .last_successful_upstream_state
 
       - name: Save successful upstream state
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: .last_successful_upstream_state
           key: successful-upstream-${{ needs.check-upstream.outputs.state }}
