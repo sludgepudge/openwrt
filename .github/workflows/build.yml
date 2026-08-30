@@ -1,4 +1,4 @@
-name: Build OpenWrt (MX4200 v1 & v2)
+name: Build OpenWrt EDMA/NSS (MX4200 v1 & v2)
 
 on:
   workflow_dispatch:
@@ -11,239 +11,589 @@ on:
         description: Optional HTTPS URL for a temporary MX4200 v2 config
         required: false
         type: string
+
   schedule:
-    - cron: '0 */2 * * *'   # every 2 hours
+    - cron: '0 */2 * * *'
+
+concurrency:
+  group: openwrt-edma-nss-build
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  OPENWRT_REPOSITORY: JuliusBairaktaris/openwrt-nss-edma
+  OPENWRT_BRANCH: nss-edma-rework
+
+  NSS_REPOSITORY: JuliusBairaktaris/nss-packages
+  NSS_BRANCH: edma-nss
+
 
 jobs:
   check-upstream:
-    runs-on: ubuntu-22.04
-    outputs:
-      latest: ${{ steps.get.outputs.latest }}
-      changed: ${{ steps.compare.outputs.changed }}
     name: Check for upstream changes
+    runs-on: ubuntu-26.04
+
+    outputs:
+      openwrt_sha: ${{ steps.upstream.outputs.openwrt_sha }}
+      nss_sha: ${{ steps.upstream.outputs.nss_sha }}
+      state: ${{ steps.upstream.outputs.state }}
+      changed: ${{ steps.compare.outputs.changed }}
 
     steps:
-      - name: Get latest upstream commit
-        id: get
+      - name: Resolve upstream revisions
+        id: upstream
+        shell: bash
         run: |
-          git clone --depth 1 https://github.com/qosmio/openwrt-ipq.git upstream
-          cd upstream
-          LATEST=$(git rev-parse HEAD)
-          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
 
-      - name: Restore last upstream commit cache
-        uses: actions/cache@v4
+          OPENWRT_SHA="$(
+            git ls-remote \
+              "https://github.com/${OPENWRT_REPOSITORY}.git" \
+              "refs/heads/${OPENWRT_BRANCH}" |
+            awk '{print $1}'
+          )"
+
+          NSS_SHA="$(
+            git ls-remote \
+              "https://github.com/${NSS_REPOSITORY}.git" \
+              "refs/heads/${NSS_BRANCH}" |
+            awk '{print $1}'
+          )"
+
+          if [ -z "$OPENWRT_SHA" ]; then
+            echo "Unable to resolve ${OPENWRT_REPOSITORY}:${OPENWRT_BRANCH}" >&2
+            exit 1
+          fi
+
+          if [ -z "$NSS_SHA" ]; then
+            echo "Unable to resolve ${NSS_REPOSITORY}:${NSS_BRANCH}" >&2
+            exit 1
+          fi
+
+          STATE="${OPENWRT_SHA}-${NSS_SHA}"
+
+          echo "OpenWrt: ${OPENWRT_SHA}"
+          echo "NSS:     ${NSS_SHA}"
+          echo "State:   ${STATE}"
+
+          echo "openwrt_sha=${OPENWRT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "nss_sha=${NSS_SHA}" >> "$GITHUB_OUTPUT"
+          echo "state=${STATE}" >> "$GITHUB_OUTPUT"
+
+      #
+      # IMPORTANT:
+      #
+      # Restore only. Do NOT use actions/cache@v4 here, otherwise a restored
+      # previous marker can be saved under the new key before the firmware has
+      # actually built successfully.
+      #
+      - name: Restore last successful upstream state
+        uses: actions/cache/restore@v4
         with:
-          path: .last_upstream_commit
-          key: upstream-commit-${{ steps.get.outputs.latest }}
+          path: .last_successful_upstream_state
+          key: successful-upstream-${{ steps.upstream.outputs.state }}
           restore-keys: |
-            upstream-commit-
+            successful-upstream-
 
-      - name: Compare with last build
+      - name: Compare with last successful build
         id: compare
+        shell: bash
         run: |
-          LATEST="${{ steps.get.outputs.latest }}"
-          if [ -f .last_upstream_commit ]; then
-            LAST=$(cat .last_upstream_commit)
-            if [ "$LAST" = "$LATEST" ]; then
-              echo "No new commits ($LAST)."
+          set -euo pipefail
+
+          CURRENT="${{ steps.upstream.outputs.state }}"
+
+          if [ -f .last_successful_upstream_state ]; then
+            PREVIOUS="$(cat .last_successful_upstream_state)"
+
+            echo "Previous successful state: ${PREVIOUS}"
+            echo "Current upstream state:    ${CURRENT}"
+
+            if [ "$PREVIOUS" = "$CURRENT" ]; then
+              echo "No upstream changes."
               echo "changed=false" >> "$GITHUB_OUTPUT"
             else
-              echo "New commit: $LATEST (was $LAST)."
+              echo "Upstream has changed."
               echo "changed=true" >> "$GITHUB_OUTPUT"
             fi
           else
-            echo "First run (no previous commit)."
+            echo "No previous successful state found."
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
-          # Update the marker so the cache can save it in post-step
-          echo "$LATEST" > .last_upstream_commit
+
 
   build:
+    name: Build OpenWrt ${{ matrix.device }}
     needs: check-upstream
-    if: github.event_name == 'workflow_dispatch' || needs.check-upstream.outputs.changed == 'true'
-    runs-on: ubuntu-22.04
+
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      needs.check-upstream.outputs.changed == 'true'
+
+    runs-on: ubuntu-26.04
+
     strategy:
       fail-fast: false
       matrix:
-        device: [mx4200v1, mx4200v2]
-    name: Build OpenWrt ${{ matrix.device }}
+        device:
+          - mx4200v1
+          - mx4200v2
 
     steps:
-    - name: Checkout workflow repo
-      uses: actions/checkout@v3
+      - name: Checkout workflow repository
+        uses: actions/checkout@v7
 
-    - name: Set up build environment
-      run: |
-        sudo apt update
-        sudo apt install -y \
-          build-essential \
-          gcc g++ gcc-multilib g++-multilib \
-          flex bison clang gawk gettext git \
-          libncurses-dev libssl-dev python3-distutils \
-          rsync unzip zlib1g-dev file libelf-dev libc6-dev \
-          libtool autoconf automake cmake pkg-config libglib2.0-dev
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-        echo "LD=ld" >> $GITHUB_ENV
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
 
-    - name: Checkout OpenWrt buildroot
-      uses: actions/checkout@v4
-      with:
-        repository: qosmio/openwrt-ipq
-        path: openwrt
-        fetch-depth: 0   # full history, keeps proper rXXXXX version
+          sudo apt-get update
+          sudo apt-get install -y \
+            bzip2 \
+            g++ \
+            gawk \
+            gcc \
+            git \
+            glibc-source \
+            libncurses-dev \
+            make \
+            rsync
 
-    - name: Apply custom config and files
-      env:
-        EVENT_NAME: ${{ github.event_name }}
-        MX4200V1_CONFIG_URL: ${{ inputs.mx4200v1_config_url }}
-        MX4200V2_CONFIG_URL: ${{ inputs.mx4200v2_config_url }}
-      run: |
-        cd openwrt
+      #
+      # Pin OpenWrt to the exact revision observed by check-upstream.
+      #
+      # This prevents the branch moving between the check and the actual build.
+      #
+      - name: Checkout OpenWrt EDMA/NSS buildroot
+        uses: actions/checkout@v7
+        with:
+          repository: JuliusBairaktaris/openwrt-nss-edma
+          ref: ${{ needs.check-upstream.outputs.openwrt_sha }}
+          path: openwrt
+          fetch-depth: 0
 
-        # Use custom feeds.conf if available
-        cp ../feeds.conf.custom feeds.conf.default
+      - name: Prepare feeds and custom packages
+        env:
+          NSS_SHA: ${{ needs.check-upstream.outputs.nss_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
 
-        cd package
+          cd openwrt
 
-        # Clone custom packages
-        git clone https://github.com/gSpotx2f/luci-app-interfaces-statistics.git
-        git clone https://github.com/jerrykuku/luci-theme-argon.git
-        git clone https://github.com/jerrykuku/luci-app-argon-config.git
-        git clone https://github.com/gSpotx2f/luci-app-cpu-status.git
+          #
+          # Start from the feeds belonging to the exact OpenWrt revision we
+          # checked out, then append Julius's NSS feed pinned to the exact
+          # revision discovered by check-upstream.
+          #
+          cp feeds.conf.default feeds.conf
 
-        cd ..
+          echo \
+            "src-git nss https://github.com/JuliusBairaktaris/nss-packages.git^${NSS_SHA}" \
+            >> feeds.conf
 
-        ./scripts/feeds update -a
-        ./scripts/feeds install -a
+          echo
+          echo "Feeds:"
+          cat feeds.conf
+          echo
 
-        # Add custom files if available
-        if [ -d ../custom/files ]; then
-          cp -a ../custom/files/. files/
-          # Make all shebang-aware files executable
-          find files/ -type f \
-            -exec sh -c 'head -n1 "$1" | grep -q "^#!" && chmod +x "$1"' _ {} \;
-        fi
+          #
+          # Custom packages used by the SLUDGE builds.
+          #
+          cd package
 
-        # Apply patches if any
-        if [ -d ../custom/patches ]; then
-          for patch in ../custom/patches/*.patch; do
-            [ -f "$patch" ] && patch -p1 < "$patch"
-          done
-        fi
+          git clone --depth 1 \
+            https://github.com/gSpotx2f/luci-app-interfaces-statistics.git
 
-        # Use an optional externally hosted config only for manual builds.
-        DEVICE="${{ matrix.device }}"
-        case "$DEVICE" in
-          mx4200v1) CONFIG_URL="$MX4200V1_CONFIG_URL" ;;
-          mx4200v2) CONFIG_URL="$MX4200V2_CONFIG_URL" ;;
-          *)
-            echo "Unsupported device: $DEVICE" >&2
-            exit 1
-            ;;
-        esac
+          git clone --depth 1 \
+            https://github.com/jerrykuku/luci-theme-argon.git
 
-        if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$CONFIG_URL" ]; then
-          echo "Using externally hosted config for $DEVICE."
-          curl --fail --silent --show-error --location \
-            --proto '=https' --proto-redir '=https' \
-            --output .config "$CONFIG_URL"
+          git clone --depth 1 \
+            https://github.com/jerrykuku/luci-app-argon-config.git
 
-          if [ ! -s .config ]; then
-            echo "Downloaded config for $DEVICE is empty." >&2
+          git clone --depth 1 \
+            https://github.com/gSpotx2f/luci-app-cpu-status.git
+
+          cd ..
+
+          #
+          # NSS packages must exist before defconfig resolves the ath11k/NSS
+          # dependency tree.
+          #
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+          if ! ./scripts/feeds list -r nss | grep -q 'qca-nss-drv'; then
+            echo "NSS feed did not install correctly." >&2
             exit 1
           fi
 
-          # Normalize files uploaded from Windows before validating the target.
-          sed -i 's/\r$//' .config
+      - name: Apply custom files and patches
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          #
+          # Root filesystem overlay.
+          #
+          # This also retains the custom IPQ8074 firmware currently stored
+          # under custom/files/lib/firmware/IPQ8074.
+          #
+          if [ -d ../custom/files ]; then
+            mkdir -p files
+            cp -a ../custom/files/. files/
+
+            find files/ -type f \
+              -exec sh -c \
+                'head -n1 "$1" | grep -q "^#!" && chmod +x "$1"' \
+                _ {} \;
+          fi
+
+          #
+          # Optional custom source patches.
+          #
+          if [ -d ../custom/patches ]; then
+            for patch in ../custom/patches/*.patch; do
+              [ -f "$patch" ] || continue
+
+              echo "Applying ${patch}"
+              patch -p1 < "$patch"
+            done
+          fi
+
+      - name: Select build configuration
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MX4200V1_CONFIG_URL: ${{ inputs.mx4200v1_config_url }}
+          MX4200V2_CONFIG_URL: ${{ inputs.mx4200v2_config_url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd openwrt
+
+          DEVICE="${{ matrix.device }}"
+
+          case "$DEVICE" in
+            mx4200v1)
+              CONFIG_URL="$MX4200V1_CONFIG_URL"
+              ;;
+            mx4200v2)
+              CONFIG_URL="$MX4200V2_CONFIG_URL"
+              ;;
+            *)
+              echo "Unsupported device: $DEVICE" >&2
+              exit 1
+              ;;
+          esac
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$CONFIG_URL" ]; then
+            echo "Using externally hosted config for ${DEVICE}."
+
+            curl \
+              --fail \
+              --silent \
+              --show-error \
+              --location \
+              --proto '=https' \
+              --proto-redir '=https' \
+              --output .config \
+              "$CONFIG_URL"
+
+            if [ ! -s .config ]; then
+              echo "Downloaded config for ${DEVICE} is empty." >&2
+              exit 1
+            fi
+
+            sed -i 's/\r$//' .config
+          else
+            CONFIG_FILE="../config.${DEVICE}.seed"
+
+            if [ ! -f "$CONFIG_FILE" ]; then
+              echo "Missing config: ${CONFIG_FILE}" >&2
+              exit 1
+            fi
+
+            echo "Using repository config for ${DEVICE}."
+            cp "$CONFIG_FILE" .config
+          fi
+
           EXPECTED_TARGET="CONFIG_TARGET_qualcommax_ipq807x_DEVICE_linksys_${DEVICE}=y"
+
           if ! grep -Fxq "$EXPECTED_TARGET" .config; then
-            echo "Downloaded config does not target $DEVICE." >&2
+            echo "Config does not target ${DEVICE}." >&2
             exit 1
           fi
-        else
-          echo "Using repository config for $DEVICE."
-          cp "../config.${DEVICE}.seed" .config
-        fi
 
-    - name: Build firmware
-      run: |
-        cd openwrt
-        make defconfig
-        make download -j$(nproc)
-        make -j$(nproc)
+      - name: Resolve and validate configuration
+        shell: bash
+        run: |
+          set -euo pipefail
 
-    - name: Upload firmware to Cloudflare R2
-      id: upload-firmware
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        R2_BUCKET: openwrt
-        R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-      run: |
-        cd openwrt/bin/targets
-        TARGET_DIR=$(find . -type f -name version.buildinfo -exec dirname {} \;)
-        cd "$TARGET_DIR"
-        VERSION=$(cat version.buildinfo | tr -d '\n')
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "VERSION=$VERSION" >> $GITHUB_ENV
-        echo "Uploaded version $VERSION for ${{ matrix.device }}"
+          cd openwrt
 
-        sync
-        sha256sum -c sha256sums
+          make defconfig
 
-        for file in openwrt-qualcommax-ipq807x-linksys_${{ matrix.device }}*; do
-          if [[ -f "$file" ]]; then
+          DEVICE="${{ matrix.device }}"
+
+          require_config() {
+            local symbol="$1"
+
+            if ! grep -Fxq "$symbol" .config; then
+              echo "Required config missing: ${symbol}" >&2
+              exit 1
+            fi
+          }
+
+          reject_config() {
+            local symbol="$1"
+
+            if grep -Fxq "$symbol" .config; then
+              echo "Unexpected legacy config enabled: ${symbol}" >&2
+              exit 1
+            fi
+          }
+
+          #
+          # Common EDMA/NSS + 802.11s requirements.
+          #
+          require_config "CONFIG_PACKAGE_kmod-qca-nss-drv=y"
+          require_config "CONFIG_PACKAGE_kmod-qca-nss-ecm=y"
+          require_config "CONFIG_PACKAGE_kmod-qca-nss-drv-wifi-meshmgr=y"
+
+          require_config "CONFIG_ATH11K_NSS_SUPPORT=y"
+          require_config "CONFIG_ATH11K_NSS_MESH_SUPPORT=y"
+
+          require_config "CONFIG_PACKAGE_MAC80211_NSS_SUPPORT=y"
+          require_config "CONFIG_PACKAGE_MAC80211_MESH=y"
+
+          require_config "CONFIG_NSS_FIRMWARE_VERSION_11_4=y"
+
+          #
+          # The two MX4200 revisions have different RAM sizes and therefore
+          # require different compile-time ath11k/NSS memory profiles.
+          #
+          case "$DEVICE" in
+            mx4200v1)
+              require_config "CONFIG_ATH11K_MEM_PROFILE_512M=y"
+              require_config "CONFIG_NSS_MEM_PROFILE_MEDIUM=y"
+              ;;
+            mx4200v2)
+              require_config "CONFIG_ATH11K_MEM_PROFILE_1G=y"
+              require_config "CONFIG_NSS_MEM_PROFILE_HIGH=y"
+              ;;
+          esac
+
+          #
+          # These belong to the old Qosmio/QSDK-style data plane and must not
+          # reappear in the EDMA/PPE architecture.
+          #
+          reject_config "CONFIG_PACKAGE_kmod-qca-nss-dp=y"
+          reject_config "CONFIG_PACKAGE_kmod-qca-ssdk=y"
+
+          echo
+          echo "EDMA/NSS configuration sanity checks passed for ${DEVICE}."
+          echo
+
+          grep -E \
+            '^(CONFIG_(ATH11K.*(NSS|MEM_PROFILE)|PACKAGE_.*(qca-nss|qca-ppe)|MAC80211_NSS|MAC80211_MESH|NSS_FIRMWARE_VERSION|NSS_MEM_PROFILE))' \
+            .config || true
+
+      - name: Download sources
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for attempt in 1 2 3; do
+            if make download -j"$(nproc)" V=s; then
+              exit 0
+            fi
+
+            echo "Download attempt ${attempt} failed."
+
+            if [ "$attempt" -lt 3 ]; then
+              sleep 5
+            fi
+          done
+
+          exit 1
+
+      - name: Build firmware
+        working-directory: openwrt
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! make -j"$(nproc)"; then
+            echo "::warning::Parallel build failed; retrying single-threaded for diagnostics"
+            make -j1 V=s
+          fi
+
+      - name: Upload firmware to Cloudflare R2
+        id: upload-firmware
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: openwrt
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd openwrt/bin/targets
+
+          TARGET_DIR="$(
+            find . \
+              -type f \
+              -name version.buildinfo \
+              -exec dirname {} \; |
+            head -n1
+          )"
+
+          if [ -z "$TARGET_DIR" ]; then
+            echo "Unable to locate build target directory." >&2
+            exit 1
+          fi
+
+          cd "$TARGET_DIR"
+
+          VERSION="$(tr -d '\n' < version.buildinfo)"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "VERSION=${VERSION}" >> "$GITHUB_ENV"
+
+          echo "Built ${VERSION} for ${{ matrix.device }}"
+
+          sync
+          sha256sum -c sha256sums
+
+          shopt -s nullglob
+
+          for file in openwrt-qualcommax-ipq807x-linksys_${{ matrix.device }}*; do
             if [[ "$file" == *.manifest ]]; then
               newfile="manifest"
             else
               newfile="${file#openwrt-qualcommax-ipq807x-linksys_${{ matrix.device }}-}"
             fi
+
             mv "$file" "$newfile"
+          done
+
+          aws \
+            --endpoint-url "$R2_ENDPOINT" \
+            s3 cp \
+            . \
+            "s3://${R2_BUCKET}/${{ matrix.device }}/${VERSION}/" \
+            --recursive \
+            --exclude "packages/*"
+
+      - name: Emit result JSON
+        if: always()
+        env:
+          R2_URL: ow.okie.eu
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          DEVICE="${{ matrix.device }}"
+          STATUS="${{ job.status }}"
+          VERSION="${VERSION:-unknown}"
+
+          if [ "$STATUS" = "success" ] && [ "$VERSION" != "unknown" ]; then
+            URL="https://${R2_URL}/${DEVICE}/${VERSION}/squashfs-sysupgrade.bin"
+          else
+            URL="$RUN_URL"
           fi
-        done
 
-        aws --endpoint-url "$R2_ENDPOINT" s3 cp . "s3://$R2_BUCKET/${{ matrix.device }}/$VERSION/" --recursive --exclude "packages/*"
+          jq -n \
+            --arg device "$DEVICE" \
+            --arg status "$STATUS" \
+            --arg version "$VERSION" \
+            --arg url "$URL" \
+            '{
+              device: $device,
+              status: $status,
+              version: $version,
+              url: $url
+            }' \
+            > "result-${DEVICE}.json"
 
-    - name: Emit result JSON (always)
-      if: always()
-      env:
-        R2_URL: ow.okie.eu
-        R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-        RUN_URL: "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-      run: |
-        DEVICE="${{ matrix.device }}"
-        STATUS="${{ job.status }}"
-        VERSION="${VERSION:-unknown}"
+      - name: Upload result JSON artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-${{ matrix.device }}
+          path: result-${{ matrix.device }}.json
+          if-no-files-found: error
 
-        if [ "$STATUS" = "success" ] && [ "$VERSION" != "unknown" ]; then
-          URL="https://${R2_URL}/${DEVICE}/${VERSION}/squashfs-sysupgrade.bin"
-        else
-          URL="$RUN_URL"
-        fi
 
-        cat > result-${DEVICE}.json <<EOF
-        {
-          "device": "${DEVICE}",
-          "status": "${STATUS}",
-          "version": "${VERSION}",
-          "url": "${URL}"
-        }
-        EOF
+  #
+  # The cache marker is written ONLY after the complete v1/v2 matrix succeeds.
+  #
+  # A manual build using a temporary externally-hosted config deliberately does
+  # NOT advance the marker, because that would otherwise suppress the next
+  # scheduled build of the repository configs.
+  #
+  record-success:
+    name: Record successful upstream state
+    needs:
+      - check-upstream
+      - build
 
-    - name: Upload result JSON artifact (always)
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: result-${{ matrix.device }}
-        path: result-${{ matrix.device }}.json
-        if-no-files-found: error
+    if: >
+      always() &&
+      needs.build.result == 'success' &&
+      needs.check-upstream.outputs.changed == 'true' &&
+      (
+        github.event_name == 'schedule' ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          inputs.mx4200v1_config_url == '' &&
+          inputs.mx4200v2_config_url == ''
+        )
+      )
+
+    runs-on: ubuntu-26.04
+
+    steps:
+      - name: Create successful state marker
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "${{ needs.check-upstream.outputs.state }}" \
+            > .last_successful_upstream_state
+
+          echo "Recording successful state:"
+          cat .last_successful_upstream_state
+
+      - name: Save successful upstream state
+        uses: actions/cache/save@v4
+        with:
+          path: .last_successful_upstream_state
+          key: successful-upstream-${{ needs.check-upstream.outputs.state }}
+
 
   notify:
-    needs: [check-upstream, build]
-    if: always() && (github.event_name == 'workflow_dispatch' || needs.check-upstream.outputs.changed == 'true')
-    runs-on: ubuntu-22.04
     name: Send build result notification to Discord
+    needs:
+      - check-upstream
+      - build
+      - record-success
+
+    if: >
+      always() &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        needs.check-upstream.outputs.changed == 'true'
+      )
+
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Download result artifacts
@@ -254,44 +604,71 @@ jobs:
           path: results
 
       - name: Build Discord message
-        id: msg
+        id: message
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
+
           summary=""
           ok=true
 
-          for f in results/result-*.json; do
-            device=$(jq -r '.device' "$f")
-            status=$(jq -r '.status' "$f")
-            version=$(jq -r '.version' "$f")
-            url=$(jq -r '.url' "$f")
+          shopt -s nullglob
+          files=(results/result-*.json)
+
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No build result artifacts found." >&2
+            exit 1
+          fi
+
+          for file in "${files[@]}"; do
+            device="$(jq -r '.device' "$file")"
+            status="$(jq -r '.status' "$file")"
+            version="$(jq -r '.version' "$file")"
+            url="$(jq -r '.url' "$file")"
 
             if [ "$status" = "success" ]; then
-              summary="$summary\n🟢 **$device** built successfully (version: $version)\n💾 **sysupgrade image:**\n<$url>"
+              summary+=$'\n'
+              summary+="🟢 **${device}** built successfully (version: ${version})"
+              summary+=$'\n'
+              summary+="💾 **sysupgrade image:**"
+              summary+=$'\n'
+              summary+="<${url}>"
             else
-              summary="$summary\n🔴 **$device** failed to build → [View Logs]($url)"
+              summary+=$'\n'
+              summary+="🔴 **${device}** failed to build → [View Logs](${url})"
               ok=false
             fi
           done
 
           if $ok; then
-            title="# ✅ OpenWrt build succeeded!"
+            title="# ✅ OpenWrt EDMA/NSS build succeeded!"
           else
-            title="# ❌ OpenWrt build failed!"
+            title="# ❌ OpenWrt EDMA/NSS build failed!"
           fi
 
-          content="$title\n$summary"
-          content="${content//'%'/%25}"
-          content="${content//$'\n'/%0A}"
-          content="${content//$'\r'/%0D}"
+          content="${title}${summary}"
 
-          echo "content=$content" >> $GITHUB_OUTPUT
+          {
+            echo 'content<<EOF'
+            printf '%s\n' "$content"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Send Discord message
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          CONTENT: ${{ steps.msg.outputs.content }}
+          CONTENT: ${{ steps.message.outputs.content }}
+        shell: bash
         run: |
-          curl -H "Content-Type: application/json" -X POST \
-               -d "{\"content\": \"$CONTENT\"}" \
-               "$DISCORD_WEBHOOK_URL"
+          set -euo pipefail
+
+          jq -n \
+            --arg content "$CONTENT" \
+            '{content: $content}' |
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            -H 'Content-Type: application/json' \
+            --data-binary @- \
+            "$DISCORD_WEBHOOK_URL"

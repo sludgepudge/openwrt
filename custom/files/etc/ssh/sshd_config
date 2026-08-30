@@ -1,0 +1,4 @@
+PermitRootLogin without-password
+PasswordAuthentication no
+PubkeyAuthentication yes
+Subsystem sftp /usr/libexec/sftp-server
