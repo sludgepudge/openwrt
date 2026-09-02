@@ -268,9 +268,6 @@ jobs:
           #
           # Root filesystem overlay.
           #
-          # This also retains the custom IPQ8074 firmware currently stored
-          # under custom/files/lib/firmware/IPQ8074.
-          #
           if [ -d ../custom/files ]; then
             mkdir -p files
             cp -a ../custom/files/. files/
@@ -281,17 +278,23 @@ jobs:
                 _ {} \;
           fi
 
+                    #
+          # Apply common and device-specific buildroot overlays.
           #
-          # Optional custom source patches.
+          # A file under custom/buildroot/mx4200v1 is copied only into the
+          # mx4200v1 build, and vice versa for mx4200v2.
+          # A file under custom/buildroot/common is copied into both.
           #
-          if [ -d ../custom/patches ]; then
-            for patch in ../custom/patches/*.patch; do
-              [ -f "$patch" ] || continue
+          DEVICE="${{ matrix.device }}"
 
-              echo "Applying ${patch}"
-              patch -p1 < "$patch"
-            done
-          fi
+          for scope in common "$DEVICE"; do
+            OVERLAY="../custom/buildroot/${scope}"
+
+            if [ -d "$OVERLAY" ]; then
+              echo "Applying buildroot overlay: ${scope}"
+              cp -a "$OVERLAY"/. .
+            fi
+          done
 
       - name: Select build configuration
         env:

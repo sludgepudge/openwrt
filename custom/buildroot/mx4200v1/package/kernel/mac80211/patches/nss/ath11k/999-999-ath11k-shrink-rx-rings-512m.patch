@@ -1,0 +1,43 @@
+From: sludgepudge <noreply@local>
+Subject: [PATCH] ath11k: shrink remaining RX rings for 512M profile
+
+The Julius NSS ath11k patchset already reduces several monitor rings for
+CPTCFG_ATH11K_MEM_PROFILE_512M. Reduce the remaining oversized RX buffer,
+refill and monitor descriptor rings without changing the 1G profile.
+
+--- a/drivers/net/wireless/ath/ath11k/dp.h
++++ b/drivers/net/wireless/ath/ath11k/dp.h
+@@ -237,13 +237,21 @@ struct ath11k_pdev_dp {
+ #define DP_REO_EXCEPTION_RING_SIZE	128
+ #define DP_REO_CMD_RING_SIZE		256
+ #define DP_REO_STATUS_RING_SIZE		2048
++#ifdef CPTCFG_ATH11K_MEM_PROFILE_512M
++#define DP_RXDMA_BUF_RING_SIZE		2048
++#else
+ #define DP_RXDMA_BUF_RING_SIZE		4096
++#endif
+ #define DP_RXDMA_REFILL_RING_SIZE	ATH11K_DP_RXDMA_REFILL_RING_SIZE
+ #define DP_RXDMA_NSS_REFILL_RING_SIZE	ATH11K_DP_RXDMA_NSS_REFILL_RING_SIZE
+ #define DP_RXDMA_ERR_DST_RING_SIZE	1024
+ #define DP_RXDMA_MON_STATUS_RING_SIZE	ATH11K_DP_RXDMA_MON_STATUS_RING_SIZE
+ #define DP_RXDMA_MONITOR_BUF_RING_SIZE	ATH11K_DP_RXDMA_MONITOR_BUF_RING_SIZE
+ #define DP_RXDMA_MONITOR_DST_RING_SIZE	ATH11K_DP_RXDMA_MONITOR_BUF_RING_SIZE
++#ifdef CPTCFG_ATH11K_MEM_PROFILE_512M
++#define DP_RXDMA_MONITOR_DESC_RING_SIZE	2048
++#else
+ #define DP_RXDMA_MONITOR_DESC_RING_SIZE	4096
++#endif
+ 
+ #define DP_RX_RELEASE_RING_NUM	3
+ 
+--- a/drivers/net/wireless/ath/ath11k/hw.h
++++ b/drivers/net/wireless/ath/ath11k/hw.h
+@@ -22,7 +22,7 @@
+ #define ATH11K_DP_RXDMA_MON_STATUS_RING_SIZE	512
+ #define ATH11K_DP_RXDMA_MONITOR_BUF_RING_SIZE	128
+ #define ATH11K_DP_RXDMA_MONITOR_DST_RING_SIZE	128
+-#define ATH11K_DP_RXDMA_REFILL_RING_SIZE	2048
++#define ATH11K_DP_RXDMA_REFILL_RING_SIZE	1024
+ /* 256b desc TLV + 4b(rounded) Pad + 30byte max nwifi header +
+  * 18byte mesh hdr + 8byte snap + 1500 eth payload
+  */
