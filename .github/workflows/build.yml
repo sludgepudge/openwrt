@@ -12,9 +12,6 @@ on:
         required: false
         type: string
 
-  schedule:
-    - cron: '0 */2 * * *'
-
 concurrency:
   group: openwrt-edma-nss-build
   cancel-in-progress: false
@@ -665,7 +662,7 @@ jobs:
                   separator(true),
                   {
                     type: 10,
-                    content: "### 💾 **sysupgrade image:**"
+                    content: "### 💾 **Sysupgrade Image:**"
                   },
                   {
                     type: 10,
@@ -674,11 +671,11 @@ jobs:
                   separator(true),
                   {
                     type: 10,
-                    content: "### 🛠️ **Upgrade command:**"
+                    content: "### 🛠️ **Upgrade Command:**"
                   },
                   {
                     type: 10,
-                    content: "```sh\nwget -O /tmp/squashfs-sysupgrade.bin \"\(.url)\" && sysupgrade -v /tmp/squashfs-sysupgrade.bin\n```"
+                    content: "```sh\nwget -O /tmp/sysupgrade.bin \\\n\"\(.url)\" \\\n&& sysupgrade -v /tmp/sysupgrade.bin\n```"
                   }
                 ]
               };
@@ -694,7 +691,7 @@ jobs:
                   separator(true),
                   {
                     type: 10,
-                    content: "### 🔎 **Build logs:**"
+                    content: "### 🔎 **Build Logs:**"
                   },
                   {
                     type: 10,
