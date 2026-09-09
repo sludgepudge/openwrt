@@ -528,14 +528,60 @@ jobs:
         env:
           R2_URL: ow.okie.eu
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHORT_URL_ENDPOINT: https://u.okie.uk/
+          SHORT_URL_TOKEN: ${{ secrets.SHORT_URL_TOKEN }}
         shell: bash
         run: |
+          set -u
+
           DEVICE="${{ matrix.device }}"
           STATUS="${{ job.status }}"
           VERSION="${VERSION:-unknown}"
 
           if [ "$STATUS" = "success" ] && [ "$VERSION" != "unknown" ]; then
-            URL="https://${R2_URL}/${DEVICE}/${VERSION}/squashfs-sysupgrade.bin"
+            ORIGINAL_URL="https://${R2_URL}/${DEVICE}/${VERSION}/squashfs-sysupgrade.bin"
+            URL="$ORIGINAL_URL"
+            RESPONSE_FILE="$(mktemp)"
+
+            if [ -z "$SHORT_URL_TOKEN" ]; then
+              echo "::warning::SHORT_URL_TOKEN is not configured; using the original firmware URL"
+            elif jq -nc \
+                --arg url "$ORIGINAL_URL" \
+                '{url: $url}' |
+              curl \
+                --fail-with-body \
+                --silent \
+                --show-error \
+                --connect-timeout 10 \
+                --max-time 30 \
+                --retry 2 \
+                --retry-all-errors \
+                -H "Authorization: Bearer ${SHORT_URL_TOKEN}" \
+                -H 'Content-Type: application/json' \
+                --data-binary @- \
+                --output "$RESPONSE_FILE" \
+                "$SHORT_URL_ENDPOINT"
+            then
+              if jq -e '
+                .error == false and
+                (.shortUrl | type == "string" and test("^https?://"))
+              ' "$RESPONSE_FILE" >/dev/null; then
+                URL="$(jq -r '.shortUrl' "$RESPONSE_FILE")"
+                echo "Shortened firmware URL for ${DEVICE}: ${URL}"
+              else
+                MESSAGE="$(
+                  jq -r '.message // "invalid response from URL shortener"' \
+                    "$RESPONSE_FILE" 2>/dev/null ||
+                  echo "invalid response from URL shortener"
+                )"
+
+                echo "::warning::URL shortening failed for ${DEVICE}: ${MESSAGE}; using the original URL"
+              fi
+            else
+              echo "::warning::Unable to contact the URL shortener for ${DEVICE}; using the original URL"
+            fi
+
+            rm -f "$RESPONSE_FILE"
           else
             URL="$RUN_URL"
           fi
@@ -665,7 +711,7 @@ jobs:
                   separator(true),
                   {
                     type: 10,
-                    content: "### 💾 **sysupgrade image:**"
+                    content: "### 💾 **Sysupgrade Image:**"
                   },
                   {
                     type: 10,
@@ -674,11 +720,11 @@ jobs:
                   separator(true),
                   {
                     type: 10,
-                    content: "### 🛠️ **Upgrade command:**"
+                    content: "### 🛠️ **Upgrade Command:**"
                   },
                   {
                     type: 10,
-                    content: "```sh\nwget -O /tmp/squashfs-sysupgrade.bin \"\(.url)\" && sysupgrade -v /tmp/squashfs-sysupgrade.bin\n```"
+                    content: "```sh\nwget -O /tmp/sysupgrade.bin \\\n\"\(.url)\" \\\n&& sysupgrade -v /tmp/sysupgrade.bin\n```"
                   }
                 ]
               };
@@ -694,7 +740,7 @@ jobs:
                   separator(true),
                   {
                     type: 10,
-                    content: "### 🔎 **Build logs:**"
+                    content: "### 🔎 **Build Logs:**"
                   },
                   {
                     type: 10,
