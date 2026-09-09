@@ -634,13 +634,9 @@ jobs:
           path: results
 
       - name: Build Discord message
-        id: message
         shell: bash
         run: |
           set -euo pipefail
-
-          summary=""
-          ok=true
 
           shopt -s nullglob
           files=(results/result-*.json)
@@ -650,55 +646,117 @@ jobs:
             exit 1
           fi
 
-          for file in "${files[@]}"; do
-            device="$(jq -r '.device' "$file")"
-            status="$(jq -r '.status' "$file")"
-            version="$(jq -r '.version' "$file")"
-            url="$(jq -r '.url' "$file")"
+          jq -s '
+            def separator($divider):
+              {
+                type: 14,
+                spacing: 1,
+                divider: $divider
+              };
 
-            if [ "$status" = "success" ]; then
-              summary+=$'\n'
-              summary+="🟢 **${device}** built successfully (version: ${version})"
-              summary+=$'\n'
-              summary+="💾 **sysupgrade image:**"
-              summary+=$'\n'
-              summary+="<${url}>"
-            else
-              summary+=$'\n'
-              summary+="🔴 **${device}** failed to build → [View Logs](${url})"
-              ok=false
-            fi
-          done
+            def success_component:
+              {
+                type: 17,
+                components: [
+                  {
+                    type: 10,
+                    content: "### 🟢 **\(.device)** built successfully (\(.version))"
+                  },
+                  separator(true),
+                  {
+                    type: 10,
+                    content: "### 💾 **sysupgrade image:**"
+                  },
+                  {
+                    type: 10,
+                    content: "<\(.url)>"
+                  },
+                  separator(true),
+                  {
+                    type: 10,
+                    content: "### 🛠️ **Upgrade command:**"
+                  },
+                  {
+                    type: 10,
+                    content: "```sh\nwget -O /tmp/squashfs-sysupgrade.bin \"\(.url)\" && sysupgrade -v /tmp/squashfs-sysupgrade.bin\n```"
+                  }
+                ]
+              };
 
-          if $ok; then
-            title="# ✅ OpenWrt EDMA/NSS build succeeded!"
-          else
-            title="# ❌ OpenWrt EDMA/NSS build failed!"
-          fi
+            def failure_component:
+              {
+                type: 17,
+                components: [
+                  {
+                    type: 10,
+                    content: "### 🔴 **\(.device)** failed to build"
+                  },
+                  separator(true),
+                  {
+                    type: 10,
+                    content: "### 🔎 **Build logs:**"
+                  },
+                  {
+                    type: 10,
+                    content: "[View logs](\(.url))"
+                  }
+                ]
+              };
 
-          content="${title}${summary}"
+            def result_component:
+              if .status == "success" then
+                success_component
+              else
+                failure_component
+              end;
 
-          {
-            echo 'content<<EOF'
-            printf '%s\n' "$content"
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
+            sort_by(.device) as $results |
+            ($results | map(select(.status != "success")) | length == 0) as $ok |
+            {
+              flags: 32768,
+              components:
+                [
+                  {
+                    type: 17,
+                    components: [
+                      {
+                        type: 10,
+                        content: (
+                          if $ok then
+                            "# ✅ OpenWrt EDMA/NSS build succeeded!"
+                          else
+                            "# ❌ OpenWrt EDMA/NSS build failed!"
+                          end
+                        )
+                      }
+                    ]
+                  },
+                  separator(false)
+                ]
+                + (
+                    reduce $results[] as $result
+                      ([];
+                        .
+                        + (if length == 0 then [] else [separator(false)] end)
+                        + [$result | result_component]
+                      )
+                  )
+            }
+          ' "${files[@]}" > discord-payload.json
 
       - name: Send Discord message
         env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          CONTENT: ${{ steps.message.outputs.content }}
         shell: bash
         run: |
           set -euo pipefail
 
-          jq -n \
-            --arg content "$CONTENT" \
-            '{content: $content}' |
           curl \
             --fail \
             --silent \
             --show-error \
+            -H "Authorization: Bot ${DISCORD_BOT_TOKEN}" \
             -H 'Content-Type: application/json' \
-            --data-binary @- \
-            "$DISCORD_WEBHOOK_URL"
+            --data-binary @discord-payload.json \
+            "${DISCORD_WEBHOOK_URL}"
