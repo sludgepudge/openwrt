@@ -1,0 +1,18 @@
+From: SLUDGE OpenWrt build
+Subject: [PATCH] ath11k_nss: fix inverted mesh forwarding configuration
+
+mac80211 exposes whether mesh forwarding is enabled, while the NSS mesh
+configuration field expresses the inverse state: whether forwarding is
+blocked.
+
+--- a/drivers/net/wireless/ath/ath11k/nss.c
++++ b/drivers/net/wireless/ath/ath11k/nss.c
+@@ -1919,7 +1919,7 @@ int ath11k_nss_mesh_config_update(struct ieee80211_vif *vif, int changed)
+
+ 	if (changed & BSS_CHANGED_NSS_MESH_FWD_ENABLED) {
+ 		nss_msg->block_mesh_forwarding =
+-			vif->bss_conf.nss_offld_mesh_forward_enabled;
++			!vif->bss_conf.nss_offld_mesh_forward_enabled;
+ 		nss->mesh_forward_enabled =
+ 			vif->bss_conf.nss_offld_mesh_forward_enabled;
+ 		nss_msg->config_flags |= NSS_WIFI_MESH_CONFIG_FLAG_BLOCK_MESH_FWD_VALID;
