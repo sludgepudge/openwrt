@@ -27,8 +27,8 @@ firmware release supplies the missing rule.
 
 Signed-off-by: sludge <me@slud.ge>
 ---
- drivers/net/wireless/ath/ath11k/reg.c | 25 +++++++++++++++++++++++++
- 1 file changed, 25 insertions(+)
+ drivers/net/wireless/ath/ath11k/reg.c | 38 ++++++++++++++++++++++++++++
+ 1 file changed, 38 insertions(+)
 
 --- a/drivers/net/wireless/ath/ath11k/reg.c
 +++ b/drivers/net/wireless/ath/ath11k/reg.c
@@ -43,7 +43,7 @@ Signed-off-by: sludge <me@slud.ge>
  	u16 max_bw;
  	u32 flags, reg_6ghz_number, max_bw_6ghz;
  	char alpha2[3];
-@@ -519,6 +521,20 @@ ath11k_reg_build_regd(struct ath11k_base
+@@ -519,6 +521,31 @@ ath11k_reg_build_regd(struct ath11k_base
  	num_rules = reg_info->num_5ghz_reg_rules +
  		    reg_info->num_2ghz_reg_rules;
  
@@ -74,8 +74,8 @@ Signed-off-by: sludge <me@slud.ge>
 +
  	if (reg_info->is_ext_reg_event) {
  		reg_6ghz_number = ath11k_reg_get_num_ch_rules(reg_info,
- 							      vdev_type,
-@@ -546,6 +562,9 @@ ath11k_reg_build_regd(struct ath11k_base
+ 						      vdev_type,
+@@ -546,6 +573,9 @@ ath11k_reg_build_regd(struct ath11k_base
  			num_rules += reg_6ghz_number;
  	}
  
@@ -85,7 +85,7 @@ Signed-off-by: sludge <me@slud.ge>
  	if (!num_rules)
  		return new_regd;
  
-@@ -646,6 +665,12 @@ ath11k_reg_build_regd(struct ath11k_base
+@@ -646,6 +676,14 @@ ath11k_reg_build_regd(struct ath11k_base
  		}
  	}
  
