@@ -1,0 +1,102 @@
+From: sludge <me@slud.ge>
+Subject: [PATCH] wifi: ath11k: add missing GB 5725-5850 MHz rule for IPQ8074
+
+The regulatory information supplied by IPQ8074 firmware omits the
+5725-5850 MHz indoor band when country GB is selected.
+
+IPQ8074 uses a self-managed regulatory domain, so the correct GB rule
+from wireless-regdb is not sufficient to make the affected channels
+available.
+
+Add the missing rule when all of the following are true:
+
+  - the hardware is IPQ8074;
+  - the requested country is GB; and
+  - the firmware has not already supplied a rule covering the band.
+
+Use the limits from the current wireless-regdb GB domain:
+
+  - 5725-5850 MHz;
+  - maximum bandwidth 80 MHz;
+  - maximum EIRP 23 dBm;
+  - indoor operation only;
+  - no DFS requirement.
+
+The firmware-rule check makes the workaround dormant if a future
+firmware release supplies the missing rule.
+
+Signed-off-by: sludge <me@slud.ge>
+---
+ drivers/net/wireless/ath/ath11k/reg.c | 25 +++++++++++++++++++++++++
+ 1 file changed, 25 insertions(+)
+
+--- a/drivers/net/wireless/ath/ath11k/reg.c
++++ b/drivers/net/wireless/ath/ath11k/reg.c
+@@ -510,8 +510,10 @@ ath11k_reg_build_regd(struct ath11k_base
+ {
+ 	struct ieee80211_regdomain *new_regd = NULL;
+ 	struct cur_reg_rule *reg_rule, *reg_rule_6ghz;
++	bool add_gb_band_c;
+ 	u8 i = 0, j = 0, k = 0;
+ 	u8 num_rules;
++	u8 rule_idx;
+ 	u16 max_bw;
+ 	u32 flags, reg_6ghz_number, max_bw_6ghz;
+ 	char alpha2[3];
+@@ -519,6 +521,20 @@ ath11k_reg_build_regd(struct ath11k_base
+ 	num_rules = reg_info->num_5ghz_reg_rules +
+ 		    reg_info->num_2ghz_reg_rules;
+ 
++	add_gb_band_c = ab->hw_rev == ATH11K_HW_IPQ8074 &&
++			reg_info->alpha2[0] == 'G' &&
++			reg_info->alpha2[1] == 'B';
++
++	/*
++	 * Do not add the workaround if firmware has been updated to
++	 * provide the missing GB rule itself.
++	 */
++	for (rule_idx = 0;
++	     add_gb_band_c && rule_idx < reg_info->num_5ghz_reg_rules;
++	     rule_idx++) {
++		reg_rule = reg_info->reg_rules_5ghz_ptr + rule_idx;
++
++		/*
++		 * Leave any firmware-provided rule overlapping the GB
++		 * 5725-5850 MHz allocation untouched. This both retires
++		 * the workaround when firmware is corrected and avoids
++		 * producing overlapping regulatory rules if firmware
++		 * supplies a narrower range.
++		 */
++		if (reg_rule->start_freq < 5850 &&
++		    reg_rule->end_freq > 5725)
++			add_gb_band_c = false;
++	}
++
+ 	if (reg_info->is_ext_reg_event) {
+ 		reg_6ghz_number = ath11k_reg_get_num_ch_rules(reg_info,
+ 							      vdev_type,
+@@ -546,6 +562,9 @@ ath11k_reg_build_regd(struct ath11k_base
+ 			num_rules += reg_6ghz_number;
+ 	}
+ 
++	if (add_gb_band_c)
++		num_rules++;
++
+ 	if (!num_rules)
+ 		return new_regd;
+ 
+@@ -646,6 +665,12 @@ ath11k_reg_build_regd(struct ath11k_base
+ 		}
+ 	}
+ 
++	if (add_gb_band_c) {
++		ath11k_reg_update_rule(new_regd->reg_rules + i,
++				       5725, 5850, 80, 0, 23, 0,
++				       NL80211_RRF_NO_OUTDOOR);
++		ath11k_warn(ab, "adding missing GB 5725-5850 MHz regulatory rule\n");
++		i++;
++	}
++
+ 	new_regd->n_reg_rules = i;
+ 
+ 	return new_regd;

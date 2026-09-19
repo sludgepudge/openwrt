@@ -1,10 +1,11 @@
-From: SLUDGE OpenWrt build
+From: sludge <me@slud.ge>
 Subject: [PATCH] ath11k_nss: fix inverted mesh forwarding configuration
 
 mac80211 exposes whether mesh forwarding is enabled, while the NSS mesh
 configuration field expresses the inverse state: whether forwarding is
 blocked.
 
+Signed-off-by: sludge <me@slud.ge>
 --- a/drivers/net/wireless/ath/ath11k/nss.c
 +++ b/drivers/net/wireless/ath/ath11k/nss.c
 @@ -1919,7 +1919,7 @@ int ath11k_nss_mesh_config_update(struct ieee80211_vif *vif, int changed)

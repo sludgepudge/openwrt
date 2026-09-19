@@ -1,4 +1,4 @@
-From: sludgepudge <noreply@local>
+From: sludge <me@slud.ge>
 Subject: [PATCH] ath11k: shrink remaining RX rings for 512M profile
 
 The Julius NSS ath11k patchset already reduces several monitor rings for
@@ -30,6 +30,7 @@ refill and monitor descriptor rings without changing the 1G profile.
  
  #define DP_RX_RELEASE_RING_NUM	3
  
+ Signed-off-by: sludge <me@slud.ge>
 --- a/drivers/net/wireless/ath/ath11k/hw.h
 +++ b/drivers/net/wireless/ath/ath11k/hw.h
 @@ -22,7 +22,7 @@
