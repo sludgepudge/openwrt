@@ -222,10 +222,6 @@ jobs:
             "src-git nss https://github.com/JuliusBairaktaris/nss-packages.git^${NSS_SHA}" \
             >> feeds.conf
 
-          echo \
-            "src-git footstrap https://github.com/VizzleTF/luci-theme-footstrap.git;main" \
-            >> feeds.conf
-
           echo
           echo "Feeds:"
           cat feeds.conf
@@ -237,16 +233,7 @@ jobs:
           cd package
 
           git clone --depth 1 \
-            https://github.com/jerrykuku/luci-theme-argon.git
-
-          git clone --depth 1 \
-            https://github.com/jerrykuku/luci-app-argon-config.git
-
-          git clone --depth 1 \
             https://github.com/ChesterGoodiny/luci-theme-proton2025.git
-
-          git clone --depth 1 \
-            https://github.com/rchen14b/luci-theme-glass.git
 
           cd ..
 
